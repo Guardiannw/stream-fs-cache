@@ -1,10 +1,14 @@
 {
   "name": "stream-fs-cache",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A node duplex stream used for caching stream information to the file system while processing.  This module is very helpful when large amounts of data need to be processed over the network, while ensuring that the connection is not open for a long period of time.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Guardiannw/stream-fs-cache"
   },
   "keywords": [
     "node",
