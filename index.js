@@ -4,60 +4,79 @@ const stream = require('stream');
 const EventEmitter = require('events');
 
 const openFile = promisify(fs.open);
+const closeFile = promisify(fs.close);
 const writeFile = promisify(fs.write);
 const readFile = promisify(fs.read);
+
+const apply = (fn, self) => fn.apply(self);
 
 class StreamFsCache extends stream.Duplex {
     constructor(path, options) {
         super(options)
 
-        this.newDataEmitter = new EventEmitter();
-        this.writePosition = 0;
-        this.path = path;
-        this.readPosition = 0;
-        this.readableBytes = 0;
+        this._newDataEmitter = new EventEmitter();
+        this._writePosition = 0;
+        this._path = path;
+        this._readPosition = 0;
+        this._readableBytes = 0;
+
+        this._processData = async (size = null) => {
+            let bytesToRead = size === null ? this._readableBytes : Math.min(this._readableBytes, size);
+
+            try {
+                const {bytesRead, buffer} = await readFile(this.fd, Buffer.alloc(bytesToRead), 0, bytesToRead, this._readPosition);
+    
+                this._readableBytes -= bytesRead;
+                this._readPosition += bytesRead;
+    
+                this.push(buffer);
+            } catch (err) {
+                this.emit('error', err);
+            } 
+        }
     }
 
     _write(chunk, encoding, callback) {
-        (async () => {
+        apply(async () => {
             try {
                 if (this.fd == null)
-                    this.fd = await openFile(this.path, 'w+');
+                    this.fd = await openFile(this._path, 'w+');
 
-                const {bytesWritten} = await writeFile(this.fd, chunk, 0, chunk.length, this.writePosition);
+                const {bytesWritten} = await writeFile(this.fd, chunk, 0, chunk.length, this._writePosition);
 
-                this.readableBytes += bytesWritten;
-                this.writePosition += bytesWritten;
+                this._readableBytes += bytesWritten;
+                this._writePosition += bytesWritten;
 
-                this.newDataEmitter.emit('data');
+                this._newDataEmitter.emit('data');
 
                 callback();
             } catch (err) {
                 callback(err);
             }
-        })();
+        }, this);
     }
 
     _read(size) {
-        const processData = async () => {
-            let bytesToRead = Math.min(this.readableBytes, size);
-
-            try {
-                const {bytesRead, buffer} = await readFile(this.fd, Buffer.alloc(bytesToRead), 0, bytesToRead, this.readPosition);
-
-                this.readableBytes -= bytesRead;
-                this.readPosition += bytesRead;
-
-                this.push(buffer);
-            } catch (err) {
-                this.emit('error', err);
-            }
-        };
-
-        if (this.readableBytes > 0)
-            processData();
+        if (this._readableBytes > 0)
+            this._processData(size);
         else
-            this.newDataEmitter.once('data', processData);
+            this._newDataEmitter.once('data', this._processData);
+    }
+
+    _final(callback) {
+        apply(async () => {
+            try {
+                if (this._readableBytes > 0)
+                    await this._processData();
+    
+                if (this.fd !== null)
+                    await closeFile(this.fd);
+
+                callback();
+            } catch (err) {
+                callback(err);
+            }
+        }, this);
     }
 }
 
