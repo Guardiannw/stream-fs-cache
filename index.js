@@ -14,7 +14,7 @@ class StreamFsCache extends stream.Duplex {
     constructor(path, options) {
         super(options)
 
-        this._newDataEmitter = new EventEmitter();
+        this._controlEventEmitter = new EventEmitter();
         this._writePosition = 0;
         this._path = path;
         this._readPosition = 0;
@@ -30,6 +30,9 @@ class StreamFsCache extends stream.Duplex {
                 this._readPosition += bytesRead;
     
                 this.push(buffer);
+
+                if (this._readableBytes === 0)
+                    this._controlEventEmitter.emit('empty');
             } catch (err) {
                 this.emit('error', err);
             } 
@@ -47,7 +50,7 @@ class StreamFsCache extends stream.Duplex {
                 this._readableBytes += bytesWritten;
                 this._writePosition += bytesWritten;
 
-                this._newDataEmitter.emit('data');
+                this._controlEventEmitter.emit('data');
 
                 callback();
             } catch (err) {
@@ -60,23 +63,26 @@ class StreamFsCache extends stream.Duplex {
         if (this._readableBytes > 0)
             this._processData(size);
         else
-            this._newDataEmitter.once('data', this._processData);
+            this._controlEventEmitter.once('data', this._processData);
     }
 
     _final(callback) {
-        apply(async () => {
+        const finalize = async () => {
             try {
-                if (this._readableBytes > 0)
-                    await this._processData();
-    
-                if (this.fd !== null)
-                    await closeFile(this.fd);
+                this.push(null);
+
+                await closeFile(this.fd);
 
                 callback();
             } catch (err) {
                 callback(err);
             }
-        }, this);
+        }
+
+        if (this._readableBytes > 0)
+            this._controlEventEmitter.once('empty', finalize);
+        else
+            finalize();
     }
 }
 
